@@ -61,6 +61,16 @@ function buildHeaders() {
   }
 }
 
+function readableApiError(message: string | undefined, fallback: string) {
+  if (!message) {
+    return fallback
+  }
+  if (message.toLowerCase().includes('can not found path')) {
+    return '该功能暂未接入或当前环境不可用'
+  }
+  return message
+}
+
 async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit) {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS)
@@ -68,9 +78,9 @@ async function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit) {
     return await fetch(input, { ...init, signal: controller.signal })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiError('请求超时，请检查后端服务或网络连接', 'timeout')
+      throw new ApiError('请求超时，请检查系统服务或网络连接', 'timeout')
     }
-    throw new ApiError(error instanceof Error ? error.message : '网络请求失败', 'network')
+    throw new ApiError(error instanceof Error ? error.message : '网络连接失败，请稍后重试或联系技术支持', 'network')
   } finally {
     window.clearTimeout(timer)
   }
@@ -80,7 +90,7 @@ function unwrapResponse<T>(payload: unknown): T {
   if (payload && typeof payload === 'object' && 'errno' in payload) {
     const envelope = payload as ApiEnvelope<T>
     if (envelope.errno !== '200') {
-      throw new ApiError(envelope.msg || `业务错误 ${envelope.errno}`, 'business')
+      throw new ApiError(readableApiError(envelope.msg, `请求失败，错误码：${envelope.errno}`), 'business')
     }
     return envelope.data as T
   }
@@ -117,13 +127,13 @@ export async function apiGet<T>(path: string, fallback: T, options: { force?: bo
       headers: buildHeaders(),
     })
     if (!response.ok) {
-      throw new ApiError(`${response.status} ${response.statusText}`, 'http', response.status)
+      throw new ApiError(`请求失败，错误码：${response.status}`, 'http', response.status)
     }
     let payload: unknown
     try {
       payload = await response.json()
     } catch {
-      throw new ApiError('接口返回不是合法 JSON', 'parse', response.status)
+      throw new ApiError('系统返回格式异常，请截图联系技术支持', 'parse', response.status)
     }
     return { data: unwrapResponse<T>(payload), mode: 'real', isFallback: false, error: null, statusCode: response.status }
   } catch (error) {
@@ -152,13 +162,13 @@ export async function apiPost<TBody extends Record<string, unknown>, TResponse>(
     body: JSON.stringify(body),
   })
   if (!response.ok) {
-    throw new ApiError(`${response.status} ${response.statusText}`, 'http', response.status)
+    throw new ApiError(`请求失败，错误码：${response.status}`, 'http', response.status)
   }
   let payload: unknown
   try {
     payload = await response.json()
   } catch {
-    throw new ApiError('接口返回不是合法 JSON', 'parse', response.status)
+    throw new ApiError('系统返回格式异常，请截图联系技术支持', 'parse', response.status)
   }
   return { ok: true, data: unwrapResponse<TResponse>(payload), statusCode: response.status }
 }

@@ -38,7 +38,7 @@ export function ResourceState({
   if (isFallback) {
     return (
       <div className="flex flex-wrap items-center gap-2 text-xs text-[#F59E0B]">
-        <span>演示数据</span>
+        <span>示例数据</span>
         {error && <span className="max-w-sm truncate text-[var(--text-secondary)]">{error}</span>}
         {onRefresh && (
           <Button variant="ghost" className="min-h-7 px-2 py-1 text-xs" onClick={onRefresh}>
@@ -49,5 +49,5 @@ export function ResourceState({
     )
   }
 
-  return <span className="text-xs text-[#10B981]">真实接口</span>
+  return <span className="text-xs text-[#10B981]">正式数据</span>
 }

@@ -49,7 +49,7 @@ export function MetricCard({
     <div className="tf-card p-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-[var(--text-secondary)]">{label}</p>
-        {source && <Badge tone={source === 'real' ? 'success' : 'warning'}>{source === 'real' ? '真实' : '演示'}</Badge>}
+        {source && <Badge tone={source === 'real' ? 'success' : 'warning'}>{source === 'real' ? '正式' : '示例'}</Badge>}
       </div>
       <p className="mt-4 text-3xl font-semibold tracking-tight">{value}</p>
       {desc && <p className="mt-2 text-xs text-[var(--text-secondary)]">{desc}</p>}

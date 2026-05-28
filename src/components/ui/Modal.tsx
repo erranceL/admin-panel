@@ -5,7 +5,7 @@ export default function ConfirmModal({
   open,
   title,
   description,
-  confirmText = '确认执行',
+  confirmText = '确认',
   danger = false,
   loading = false,
   children,
