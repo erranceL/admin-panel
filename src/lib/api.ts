@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApiState, ErrorKind } from '../types'
 
 type ApiEnvelope<T> = {
@@ -135,6 +135,8 @@ export async function apiPost<TBody extends Record<string, unknown>, TResponse>(
 }
 
 export function useApiResource<T>(path: string, fallback: T): ApiState<T> & { refresh: () => Promise<void> } {
+  const fallbackRef = useRef(fallback)
+
   const [state, setState] = useState<ApiState<T>>({
     data: fallback,
     mode: 'mock',
@@ -143,11 +145,15 @@ export function useApiResource<T>(path: string, fallback: T): ApiState<T> & { re
     error: null,
   })
 
+  useEffect(() => {
+    fallbackRef.current = fallback
+  }, [fallback])
+
   const refresh = useCallback(async () => {
     setState((current) => ({ ...current, loading: true }))
-    const result = await apiGet<T>(path, fallback)
+    const result = await apiGet<T>(path, fallbackRef.current)
     setState({ ...result, loading: false })
-  }, [path, fallback])
+  }, [path])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
