@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+:root {
+  --bg-base: #0B0B0F;
+  --bg-card: #161622;
+  --bg-control: #1C1C28;
+  --border: #252536;
+  --text-primary: #FFFFFF;
+  --text-secondary: #8A8A9A;
+  --accent: #2DD4BF;
+  --danger: #E85A7E;
+  --warning: #F59E0B;
+  --success: #10B981;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow-x: clip;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.tf-card {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg-card);
+}
+
+.tf-control {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-control);
+  color: var(--text-primary);
+}
+
+.tf-glow {
+  box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.08), 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
