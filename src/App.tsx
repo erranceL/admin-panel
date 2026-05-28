@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import Badge from './components/ui/Badge'
 import Button from './components/ui/Button'
@@ -48,11 +48,14 @@ type PendingAction = {
   title: string
   description: string
   danger?: boolean
+  successTitle?: string
   details: Array<[string, React.ReactNode]>
   run: () => Promise<void>
 }
 
 const roles: Role[] = ['Admin', 'CS', 'Ops', 'Risk', 'SRE']
+const writesEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_ADMIN_WRITES === 'true'
+const mockRechargeEnabled = import.meta.env.DEV || import.meta.env.VITE_ALLOW_MOCK_RECHARGE === 'true'
 
 const navItems: NavItem[] = [
   { to: '/dashboard', label: '总览', roles: ['Admin', 'Ops', 'Risk', 'SRE'], defaultFor: ['Admin', 'Ops', 'Risk'] },
@@ -254,7 +257,7 @@ function useConfirmAction(pushToast: (toast: { type: 'success' | 'error' | 'warn
     setRunningKey(pendingAction.key)
     try {
       await pendingAction.run()
-      pushToast({ type: 'success', title: '操作已提交并由真实接口确认', message: pendingAction.title })
+      pushToast({ type: 'success', title: pendingAction.successTitle ?? '操作已提交并由真实接口确认', message: pendingAction.title })
       setPendingAction(null)
     } catch (error) {
       const message = error instanceof ApiError || error instanceof Error ? error.message : '未知错误'
@@ -289,7 +292,7 @@ function DashboardPage({ role }: { role: Role }) {
   const stats = useApiResource<StatsOverview>('/api/v1/soccer/stats/overview', mockStats)
   const health = useApiResource<PolymarketHealth>('/api/v1/admin/polymarket/health', mockPolymarketHealth)
   const facts = useApiResource<OracleFact[]>('/api/v1/admin/oracle/facts?status=proposed&limit=5', mockFacts)
-  const disputed = facts.data.filter((fact) => fact.status === 'disputed').length
+  const disputedFacts = useApiResource<OracleFact[]>('/api/v1/admin/oracle/facts?status=disputed&limit=5', mockFacts.filter((fact) => fact.status === 'disputed'))
 
   return (
     <Guard role={role} allow={['Admin', 'Ops', 'Risk', 'SRE']}>
@@ -298,8 +301,8 @@ function DashboardPage({ role }: { role: Role }) {
       <div className="grid gap-4 md:grid-cols-4">
         <MetricCard label="进行中赛事" value={stats.loading ? '...' : stats.data.live_events} source={stats.mode} />
         <MetricCard label="可见市场" value={stats.loading ? '...' : stats.data.total_markets} source={stats.mode} />
-        <MetricCard label="24h 成交额" value={`${formatNumber(stats.data.volume_24h_usd)} USDT`} source={stats.mode} />
-        <MetricCard label="待处理争议" value={disputed} source={facts.mode} desc="disputed facts" />
+        <MetricCard label="24h 成交额" value={stats.loading ? '...' : `${formatNumber(stats.data.volume_24h_usd)} USDT`} source={stats.mode} />
+        <MetricCard label="待处理争议" value={disputedFacts.loading ? '...' : disputedFacts.data.length} source={disputedFacts.mode} desc="争议中 Fact" />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <SectionCard title="Oracle 待处理" action={<ResourceState {...facts} onRefresh={() => void facts.refresh()} />}>
@@ -327,12 +330,24 @@ function RfqPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: '
   const [reason, setReason] = useState('')
   const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
   const selectedMarket = markets.data.find((market) => market.market_id === marketId) ?? markets.data[0]
-  const canOperate = role === 'Admin' || role === 'Ops'
-  const canSettle = role === 'Admin'
+  const canOperate = writesEnabled && (role === 'Admin' || role === 'Ops')
+  const canSettle = writesEnabled && role === 'Admin'
+
+  useEffect(() => {
+    const firstMarket = markets.data[0]?.market_id ?? ''
+    if (firstMarket && !markets.data.some((market) => market.market_id === marketId)) {
+      const timer = window.setTimeout(() => setMarketId(firstMarket), 0)
+      return () => window.clearTimeout(timer)
+    }
+  }, [marketId, markets.data])
 
   function submitRfq(action: 'pause' | 'resume' | 'settle') {
     if (!marketId || !reason.trim()) {
       pushToast({ type: 'warning', title: '请先补全市场 ID 和操作原因' })
+      return
+    }
+    if (!writesEnabled) {
+      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作', message: '请在内网/本地 dev 环境启用 VITE_ENABLE_ADMIN_WRITES。' })
       return
     }
     if (action === 'settle' && role !== 'Admin') {
@@ -464,7 +479,7 @@ function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type
   const [evidenceUrl, setEvidenceUrl] = useState('')
   const [payoutRatios, setPayoutRatios] = useState('{}')
   const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
-  const canWrite = role === 'Admin' || role === 'Ops'
+  const canWrite = writesEnabled && (role === 'Admin' || role === 'Ops')
   const canFinalize = role === 'Admin'
 
   function selectFact(fact: OracleFact) {
@@ -490,11 +505,15 @@ function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type
       pushToast({ type: 'warning', title: '请填写 market_id 和原因' })
       return
     }
+    if (!writesEnabled) {
+      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作', message: '请在内网/本地 dev 环境启用 VITE_ENABLE_ADMIN_WRITES。' })
+      return
+    }
     if ((action === 'finalize' || action === 'cancel') && !canFinalize) {
       pushToast({ type: 'warning', title: '当前角色不能直接执行终局操作' })
       return
     }
-    if (!canWrite && action !== 'resolve') {
+    if (!canWrite) {
       pushToast({ type: 'warning', title: '当前角色仅可查看或复核，不能提交写操作' })
       return
     }
@@ -568,7 +587,7 @@ function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type
             <Textarea label="Payout ratios JSON" value={payoutRatios} onChange={(event) => setPayoutRatios(event.target.value)} />
             <Textarea label="操作原因" value={reason} onChange={(event) => setReason(event.target.value)} />
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" loading={runningKey === 'oracle-resolve'} onClick={() => submitOracle('resolve')}>触发仲裁</Button>
+              <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-resolve'} onClick={() => submitOracle('resolve')}>触发仲裁</Button>
               <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-candidate'} onClick={() => submitOracle('candidate')}>提交候选</Button>
               <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-dispute'} onClick={() => submitOracle('dispute')}>发起争议</Button>
               <Button disabled={!canFinalize} loading={runningKey === 'oracle-finalize'} onClick={() => submitOracle('finalize')}>管理员终局</Button>
@@ -637,12 +656,16 @@ function PolymarketPage({ role, pushToast }: { role: Role; pushToast: (toast: { 
   const [selectedInternal, setSelectedInternal] = useState(mockUnmappedTeams[0].id)
   const [selectedPoly, setSelectedPoly] = useState(mockTeamPool[0].id)
   const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
-  const canQueueWrite = role === 'Admin' || role === 'Ops'
-  const canFallback = role === 'Admin' || role === 'SRE'
+  const canQueueWrite = writesEnabled && (role === 'Admin' || role === 'Ops')
+  const canFallback = writesEnabled && (role === 'Admin' || role === 'SRE')
 
   function submitQueue(action: 'confirm' | 'reject') {
     if (!canQueueWrite) {
       pushToast({ type: 'warning', title: '当前角色不能审核候选队列' })
+      return
+    }
+    if (!writesEnabled) {
+      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作' })
       return
     }
     if (!Number.isFinite(Number(id))) {
@@ -677,6 +700,10 @@ function PolymarketPage({ role, pushToast }: { role: Role; pushToast: (toast: { 
       pushToast({ type: 'warning', title: '只有管理员或 SRE 可操作 fallback' })
       return
     }
+    if (!writesEnabled) {
+      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作' })
+      return
+    }
     requestConfirm({
       key: `pm-fallback-${enabled}`,
       title: enabled ? '确认开启降级参考源' : '确认关闭降级参考源',
@@ -697,6 +724,10 @@ function PolymarketPage({ role, pushToast }: { role: Role; pushToast: (toast: { 
   function bindTeam() {
     if (!canQueueWrite) {
       pushToast({ type: 'warning', title: '当前角色不能绑定球队' })
+      return
+    }
+    if (!writesEnabled) {
+      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作' })
       return
     }
     requestConfirm({
@@ -827,7 +858,7 @@ function AccountsPage({ role, pushToast }: { role: Role; pushToast: (toast: { ty
   const [balanceError, setBalanceError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
-  const canRecharge = role === 'Admin' && !import.meta.env.VITE_API_BASE_URL
+  const canRecharge = role === 'Admin' && mockRechargeEnabled
 
   async function queryBalance() {
     if (!Number.isFinite(Number(accountId))) {
@@ -844,7 +875,7 @@ function AccountsPage({ role, pushToast }: { role: Role; pushToast: (toast: { ty
 
   function recharge() {
     if (!canRecharge) {
-      pushToast({ type: 'warning', title: 'Mock 充值仅管理员在公开演示/非生产模式可见' })
+      pushToast({ type: 'warning', title: 'Mock 充值仅管理员在显式启用的非生产环境可见' })
       return
     }
     requestConfirm({
@@ -944,6 +975,7 @@ function DistributorsPage({ role, pushToast }: { role: Role; pushToast: (toast: 
       key: 'dist-markup',
       title: '确认修改分销商加价',
       description: '当前为后端缺口原型，仅写入本地状态和演示审计日志。',
+      successTitle: '本地原型配置已保存，未调用真实接口',
       details: [
         ['分销商', selected.name],
         ['旧值', `${selected.markup_bps} bps`],

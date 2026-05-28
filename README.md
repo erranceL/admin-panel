@@ -15,11 +15,13 @@ Create `.env.local` from `.env.example` when needed:
 
 ```bash
 VITE_API_BASE_URL=http://localhost:8080
+VITE_ENABLE_ADMIN_WRITES=true
+VITE_ALLOW_MOCK_RECHARGE=true
 ```
 
 If `VITE_API_BASE_URL` is empty, local Vite dev proxies `/api` and `/health` to `VITE_API_PROXY_TARGET`.
 
-Do not put production or SIT credentials in any `VITE_*` variable. GitHub Pages is a public demo surface and must not be built with a live writable admin API base.
+Do not put production or SIT credentials in any `VITE_*` variable. GitHub Pages is a public demo surface and must not be built with a live writable admin API base. Admin writes are disabled unless `VITE_ENABLE_ADMIN_WRITES=true`; mock recharge is separately gated by `VITE_ALLOW_MOCK_RECHARGE=true`.
 
 ## GitHub Pages
 
