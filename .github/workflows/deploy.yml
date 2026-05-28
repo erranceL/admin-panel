@@ -34,13 +34,23 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
       - name: Build
         run: npm run build
         env:
           VITE_PUBLIC_BASE_PATH: /admin-panel/
 
+      - name: Scan built assets
+        run: |
+          if grep -R -E "(BEGIN PRIVATE KEY|api[_-]?key|secret|token=|VITE_API_BASE_URL=https?://)" dist; then
+            echo "Potential secret or live API endpoint found in dist"
+            exit 1
+          fi
+
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 

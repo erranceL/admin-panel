@@ -1,12 +1,16 @@
 export type Role = 'Admin' | 'CS' | 'Ops' | 'Risk' | 'SRE'
 
 export type ApiMode = 'real' | 'mock'
+export type ErrorKind = 'network' | 'http' | 'business' | 'timeout' | 'parse' | 'unknown'
 
 export interface ApiState<T> {
   data: T
   mode: ApiMode
+  isFallback: boolean
   loading: boolean
   error: string | null
+  errorKind?: ErrorKind
+  statusCode?: number
 }
 
 export interface StatsOverview {
@@ -59,6 +63,24 @@ export interface RfqMarket {
   status: string
   provider_id: string
   close_at?: string
+  provider_match_id?: string
+  provider_market_id?: string
+  scope?: string
+  market_type?: string
+  question_title?: string
+  resolution_rule?: string
+  outcomes?: RfqOutcome[]
+}
+
+export interface RfqOutcome {
+  outcome_id: string
+  label: string
+  implied_probability?: string
+  share_price?: string
+  display_decimal_odds?: string
+  volume_24h?: string
+  price_change_24h?: string
+  status?: string
 }
 
 export interface PolymarketQueueItem {
@@ -78,6 +100,14 @@ export interface PolymarketHealth {
   unmapped_teams?: number
 }
 
+export interface PolymarketTeam {
+  id: number
+  name: string
+  league_code?: string
+  external_name?: string
+  mapped?: boolean
+}
+
 export interface DistributorConfig {
   id: string
   name: string
@@ -95,4 +125,14 @@ export interface AuditLogItem {
   target: string
   result: string
   created_at: string
+  before_value?: string
+  after_value?: string
+  reason?: string
+}
+
+export interface ToastItem {
+  id: string
+  type: 'success' | 'error' | 'warning' | 'info'
+  title: string
+  message?: string
 }

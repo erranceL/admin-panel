@@ -4,6 +4,7 @@ import type {
   OracleFact,
   PolymarketHealth,
   PolymarketQueueItem,
+  PolymarketTeam,
   RfqMatch,
   RfqMarket,
   StatsOverview,
@@ -60,6 +61,14 @@ export const mockMarkets: RfqMarket[] = [
     subject_label: 'Manchester City vs Arsenal',
     status: 'open',
     provider_id: 'sig-mock',
+    provider_match_id: '1001101',
+    market_type: '1x2',
+    resolution_rule: '全场常规时间胜平负',
+    outcomes: [
+      { outcome_id: 'home', label: '主胜', display_decimal_odds: '2.12', implied_probability: '0.4717', status: 'open' },
+      { outcome_id: 'draw', label: '平局', display_decimal_odds: '3.34', implied_probability: '0.2994', status: 'open' },
+      { outcome_id: 'away', label: '客胜', display_decimal_odds: '3.05', implied_probability: '0.3278', status: 'open' },
+    ],
   },
   {
     market_id: 'rfq:match:1001101:total25',
@@ -67,6 +76,13 @@ export const mockMarkets: RfqMarket[] = [
     subject_label: 'Manchester City vs Arsenal',
     status: 'paused',
     provider_id: 'api-football',
+    provider_match_id: '1001101',
+    market_type: 'total_goals',
+    resolution_rule: '全场总进球大/小 2.5',
+    outcomes: [
+      { outcome_id: 'over', label: '大于 2.5', display_decimal_odds: '1.88', implied_probability: '0.5319', status: 'open' },
+      { outcome_id: 'under', label: '小于 2.5', display_decimal_odds: '1.96', implied_probability: '0.5102', status: 'open' },
+    ],
   },
   {
     market_id: 'rfq:futures:epl:champion',
@@ -74,6 +90,9 @@ export const mockMarkets: RfqMarket[] = [
     subject_label: 'Premier League 2026',
     status: 'open',
     provider_id: 'polymarket-ref',
+    provider_match_id: 'epl-2026',
+    market_type: 'futures',
+    resolution_rule: '官方联赛冠军归属',
   },
 ]
 
@@ -146,6 +165,18 @@ export const mockPolymarketQueue: PolymarketQueueItem[] = [
     league_code: 'MLS',
     created_at: '2026-05-28T10:30:00Z',
   },
+]
+
+export const mockUnmappedTeams: PolymarketTeam[] = [
+  { id: 9001, name: 'Internazionale', league_code: 'UCL', external_name: 'FC Internazionale' },
+  { id: 9002, name: 'Manchester United', league_code: 'EPL', external_name: 'Man United' },
+  { id: 9003, name: 'Bayern Munich', league_code: 'UCL', external_name: 'FC Bayern' },
+]
+
+export const mockTeamPool: PolymarketTeam[] = [
+  { id: 3001, name: 'Inter Milan', league_code: 'UCL', mapped: false },
+  { id: 3002, name: 'Manchester United FC', league_code: 'EPL', mapped: false },
+  { id: 3003, name: 'FC Bayern Munich', league_code: 'UCL', mapped: false },
 ]
 
 export const mockDistributors: DistributorConfig[] = [
