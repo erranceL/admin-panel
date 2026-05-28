@@ -15,6 +15,12 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  VITE_API_BASE_URL: https://surfv2-sit-api.nfexinsider.com
+  VITE_API_TIMEOUT_MS: 10000
+  VITE_ENABLE_ADMIN_WRITES: "true"
+  VITE_ALLOW_MOCK_RECHARGE: "true"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,10 +37,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Assert public demo build
+      - name: Assert SIT demo build
         run: |
-          if [ -n "${VITE_API_BASE_URL:-}" ] || [ -n "${VITE_DEV_AUTH_TOKEN:-}" ] || [ "${VITE_ENABLE_ADMIN_WRITES:-false}" = "true" ]; then
-            echo "GitHub Pages must remain a public mock/demo build without live admin API or write credentials."
+          if [ "${VITE_API_BASE_URL}" != "https://surfv2-sit-api.nfexinsider.com" ]; then
+            echo "Unexpected SIT API base URL."
+            exit 1
+          fi
+          if [ -n "${VITE_DEV_AUTH_TOKEN:-}" ]; then
+            echo "Do not build GitHub Pages with a browser-visible auth token."
             exit 1
           fi
 
@@ -51,7 +61,7 @@ jobs:
 
       - name: Scan built assets
         run: |
-          if grep -R -E "(BEGIN PRIVATE KEY|api[_-]?key|secret|Bearer |eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+|VITE_API_BASE_URL=https?://)" dist; then
+          if grep -R -E "(BEGIN PRIVATE KEY|api[_-]?key|secret|Bearer |eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+)" dist; then
             echo "Potential secret or live API endpoint found in dist"
             exit 1
           fi

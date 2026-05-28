@@ -156,7 +156,7 @@ function AdminShell({
           <p className="mb-2">数据源</p>
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-control)] px-3 py-2">
             <p className={isPublicDemo ? 'text-[#F59E0B]' : 'text-[#10B981]'}>
-              {isPublicDemo ? '公开演示站：仅保证读接口可降级展示' : '本地/内网真实 API'}
+              {isPublicDemo ? '公开演示站：仅保证读接口可降级展示' : 'SIT 真实 API'}
             </p>
             <p className="mt-1 truncate">{apiBase || '未注入 VITE_API_BASE_URL'}</p>
           </div>
@@ -172,7 +172,7 @@ function AdminShell({
             <div>
               <p className="text-sm font-semibold">{currentItem?.label ?? '足球盘口管理后台'}</p>
               <p className="text-xs text-[var(--text-secondary)]">
-                半真实原型 · 写操作失败不降级 · {isPublicDemo ? '公开演示数据' : '真实接口优先'}
+                半真实原型 · 写操作失败不降级 · {isPublicDemo ? '公开演示数据' : 'SIT 真实接口优先'}
               </p>
             </div>
             <div className="ml-auto flex items-center gap-2">
@@ -347,7 +347,7 @@ function RfqPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: '
       return
     }
     if (!writesEnabled) {
-      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作', message: '请在内网/本地 dev 环境启用 VITE_ENABLE_ADMIN_WRITES。' })
+      pushToast({ type: 'warning', title: '当前构建未启用写操作', message: '请确认 VITE_ENABLE_ADMIN_WRITES=true 后重新构建。' })
       return
     }
     if (action === 'settle' && role !== 'Admin') {
@@ -480,7 +480,7 @@ function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type
   const [payoutRatios, setPayoutRatios] = useState('{}')
   const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
   const canWrite = writesEnabled && (role === 'Admin' || role === 'Ops')
-  const canFinalize = role === 'Admin'
+  const canFinalize = writesEnabled && role === 'Admin'
 
   function selectFact(fact: OracleFact) {
     setFactId(fact.fact_id)
@@ -506,7 +506,7 @@ function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type
       return
     }
     if (!writesEnabled) {
-      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作', message: '请在内网/本地 dev 环境启用 VITE_ENABLE_ADMIN_WRITES。' })
+      pushToast({ type: 'warning', title: '当前构建未启用写操作', message: '请确认 VITE_ENABLE_ADMIN_WRITES=true 后重新构建。' })
       return
     }
     if ((action === 'finalize' || action === 'cancel') && !canFinalize) {
@@ -665,7 +665,7 @@ function PolymarketPage({ role, pushToast }: { role: Role; pushToast: (toast: { 
       return
     }
     if (!writesEnabled) {
-      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作' })
+      pushToast({ type: 'warning', title: '当前构建未启用写操作' })
       return
     }
     if (!Number.isFinite(Number(id))) {
@@ -701,7 +701,7 @@ function PolymarketPage({ role, pushToast }: { role: Role; pushToast: (toast: { 
       return
     }
     if (!writesEnabled) {
-      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作' })
+      pushToast({ type: 'warning', title: '当前构建未启用写操作' })
       return
     }
     requestConfirm({
@@ -727,7 +727,7 @@ function PolymarketPage({ role, pushToast }: { role: Role; pushToast: (toast: { 
       return
     }
     if (!writesEnabled) {
-      pushToast({ type: 'warning', title: '公开演示模式禁止提交写操作' })
+      pushToast({ type: 'warning', title: '当前构建未启用写操作' })
       return
     }
     requestConfirm({
