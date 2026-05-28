@@ -7,7 +7,7 @@ import ConfirmModal from './components/ui/Modal'
 import { EmptyState, ResourceState, SkeletonBlock } from './components/ui/State'
 import ToastContainer from './components/ui/Toast'
 import { InfoRow, MetricCard, PageHeader, SectionCard, SimpleList } from './components/layout/LayoutPrimitives'
-import { ApiError, apiGet, apiPost, useApiResource } from './lib/api'
+import { ApiError, apiGet, apiPost, debugLog, useApiResource } from './lib/api'
 import { formatNumber, getOperator, localStatus, roleLabels } from './lib/format'
 import {
   mockAuditLogs,
@@ -290,6 +290,23 @@ function useConfirmAction(pushToast: (toast: { type: 'success' | 'error' | 'warn
 
 function DashboardPage({ role }: { role: Role }) {
   const disputedFactsFallback = useMemo(() => mockFacts.filter((fact) => fact.status === 'disputed'), [])
+  useEffect(() => {
+    // #region agent log
+    debugLog('H2', 'src/App.tsx:DashboardPage', 'dashboard mounted', {
+      role,
+      hash: window.location.hash,
+      href: window.location.href,
+    })
+    // #endregion
+    return () => {
+      // #region agent log
+      debugLog('H2', 'src/App.tsx:DashboardPage', 'dashboard unmounted', {
+        role,
+        hash: window.location.hash,
+      })
+      // #endregion
+    }
+  }, [role])
   const stats = useApiResource<StatsOverview>('/api/v1/soccer/stats/overview', mockStats)
   const health = useApiResource<PolymarketHealth>('/api/v1/admin/polymarket/health', mockPolymarketHealth)
   const facts = useApiResource<OracleFact[]>('/api/v1/admin/oracle/facts?status=proposed&limit=5', mockFacts)
@@ -473,6 +490,25 @@ function RfqPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: '
 function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type: 'success' | 'error' | 'warning' | 'info'; title: string; message?: string }) => void }) {
   const [status, setStatus] = useState('proposed')
   const factsFallback = useMemo(() => mockFacts.filter((fact) => status === '' || fact.status === status), [status])
+  useEffect(() => {
+    // #region agent log
+    debugLog('H2,H3', 'src/App.tsx:OraclePage', 'oracle mounted or status changed', {
+      role,
+      status,
+      hash: window.location.hash,
+      href: window.location.href,
+    })
+    // #endregion
+    return () => {
+      // #region agent log
+      debugLog('H2,H3', 'src/App.tsx:OraclePage', 'oracle cleanup', {
+        role,
+        status,
+        hash: window.location.hash,
+      })
+      // #endregion
+    }
+  }, [role, status])
   const facts = useApiResource<OracleFact[]>(`/api/v1/admin/oracle/facts?status=${status}&limit=50`, factsFallback)
   const [factId, setFactId] = useState(mockFacts[0].fact_id)
   const [marketId, setMarketId] = useState(mockFacts[0].market_id)
