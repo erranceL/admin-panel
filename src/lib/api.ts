@@ -45,29 +45,6 @@ type ReadCacheEntry<T> = {
 
 const inFlightReads = new Map<string, Promise<ApiReadResult<unknown>>>()
 const recentReadFallbacks = new Map<string, ReadCacheEntry<unknown>>()
-const debugLogCounts = new Map<string, number>()
-
-export function debugLog(hypothesisId: string, location: string, message: string, data: Record<string, unknown>) {
-  const key = `${location}:${message}:${String(data.path ?? data.url ?? '')}`
-  const count = (debugLogCounts.get(key) ?? 0) + 1
-  debugLogCounts.set(key, count)
-  if (count > 5 && count % 100 !== 0) {
-    return
-  }
-  fetch('http://127.0.0.1:7628/ingest/b8816e85-d084-4507-8769-1f9fccf84cb2', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '7c69db' },
-    body: JSON.stringify({
-      sessionId: '7c69db',
-      runId: 'initial',
-      hypothesisId,
-      location,
-      message,
-      data: { ...data, debugCount: count },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-}
 
 function buildUrl(path: string) {
   if (path.startsWith('http')) {
@@ -125,17 +102,6 @@ function toReadFallback<T>(error: unknown, fallback: T): ApiReadResult<T> {
 export async function apiGet<T>(path: string, fallback: T, options: { force?: boolean } = {}): Promise<ApiReadResult<T>> {
   const url = buildUrl(path)
   const recentFallback = recentReadFallbacks.get(url) as ReadCacheEntry<T> | undefined
-  // #region agent log
-  debugLog('H4,H5', 'src/lib/api.ts:apiGet', 'apiGet decision', {
-    path,
-    url,
-    force: Boolean(options.force),
-    hasRecentFallback: Boolean(recentFallback),
-    recentAgeMs: recentFallback ? Date.now() - recentFallback.createdAt : null,
-    hasInFlight: inFlightReads.has(url),
-    apiBaseConfigured: Boolean(API_BASE_URL),
-  })
-  // #endregion
   if (!options.force && recentFallback && Date.now() - recentFallback.createdAt < READ_RETRY_COOLDOWN_MS) {
     return recentFallback.result
   }
@@ -147,9 +113,6 @@ export async function apiGet<T>(path: string, fallback: T, options: { force?: bo
 
   const request = (async (): Promise<ApiReadResult<T>> => {
   try {
-    // #region agent log
-    debugLog('H4', 'src/lib/api.ts:apiGet', 'network fetch start', { path, url, force: Boolean(options.force) })
-    // #endregion
     const response = await fetchWithTimeout(url, {
       headers: buildHeaders(),
     })
@@ -165,15 +128,6 @@ export async function apiGet<T>(path: string, fallback: T, options: { force?: bo
     return { data: unwrapResponse<T>(payload), mode: 'real', isFallback: false, error: null, statusCode: response.status }
   } catch (error) {
     const result = toReadFallback(error, fallback)
-    // #region agent log
-    debugLog('H4', 'src/lib/api.ts:apiGet', 'network fallback result', {
-      path,
-      url,
-      error: result.error,
-      errorKind: result.errorKind,
-      statusCode: result.statusCode ?? null,
-    })
-    // #endregion
     recentReadFallbacks.set(url, { result, createdAt: Date.now() })
     return result
   } finally {
@@ -241,14 +195,6 @@ export function useApiResource<T>(path: string, fallback: T): ApiState<T> & { re
     const timer = window.setTimeout(() => {
       const requestSeq = requestSeqRef.current + 1
       requestSeqRef.current = requestSeq
-      // #region agent log
-      debugLog('H2,H3', 'src/lib/api.ts:useApiResource', 'autoload effect fired', {
-        path,
-        requestSeq,
-        hash: window.location.hash,
-        pathname: window.location.pathname,
-      })
-      // #endregion
       setState((current) => ({ ...current, loading: true }))
       void apiGet<T>(path, fallbackRef.current).then((result) => {
         if (mountedRef.current && requestSeq === requestSeqRef.current) {
