@@ -36,6 +36,15 @@ export class ApiError extends Error {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? 10000)
+const READ_RETRY_COOLDOWN_MS = 5000
+
+type ReadCacheEntry<T> = {
+  result: ApiReadResult<T>
+  createdAt: number
+}
+
+const inFlightReads = new Map<string, Promise<ApiReadResult<unknown>>>()
+const recentReadFallbacks = new Map<string, ReadCacheEntry<unknown>>()
 
 function buildUrl(path: string) {
   if (path.startsWith('http')) {
@@ -90,9 +99,21 @@ function toReadFallback<T>(error: unknown, fallback: T): ApiReadResult<T> {
   }
 }
 
-export async function apiGet<T>(path: string, fallback: T): Promise<ApiReadResult<T>> {
+export async function apiGet<T>(path: string, fallback: T, options: { force?: boolean } = {}): Promise<ApiReadResult<T>> {
+  const url = buildUrl(path)
+  const recentFallback = recentReadFallbacks.get(url) as ReadCacheEntry<T> | undefined
+  if (!options.force && recentFallback && Date.now() - recentFallback.createdAt < READ_RETRY_COOLDOWN_MS) {
+    return recentFallback.result
+  }
+
+  const inFlight = inFlightReads.get(url) as Promise<ApiReadResult<T>> | undefined
+  if (!options.force && inFlight) {
+    return inFlight
+  }
+
+  const request = (async (): Promise<ApiReadResult<T>> => {
   try {
-    const response = await fetchWithTimeout(buildUrl(path), {
+    const response = await fetchWithTimeout(url, {
       headers: buildHeaders(),
     })
     if (!response.ok) {
@@ -106,8 +127,16 @@ export async function apiGet<T>(path: string, fallback: T): Promise<ApiReadResul
     }
     return { data: unwrapResponse<T>(payload), mode: 'real', isFallback: false, error: null, statusCode: response.status }
   } catch (error) {
-    return toReadFallback(error, fallback)
+    const result = toReadFallback(error, fallback)
+    recentReadFallbacks.set(url, { result, createdAt: Date.now() })
+    return result
+  } finally {
+    inFlightReads.delete(url)
   }
+  })()
+
+  inFlightReads.set(url, request as Promise<ApiReadResult<unknown>>)
+  return request
 }
 
 export async function apiPost<TBody extends Record<string, unknown>, TResponse>(
@@ -136,6 +165,8 @@ export async function apiPost<TBody extends Record<string, unknown>, TResponse>(
 
 export function useApiResource<T>(path: string, fallback: T): ApiState<T> & { refresh: () => Promise<void> } {
   const fallbackRef = useRef(fallback)
+  const requestSeqRef = useRef(0)
+  const mountedRef = useRef(false)
 
   const [state, setState] = useState<ApiState<T>>({
     data: fallback,
@@ -150,17 +181,32 @@ export function useApiResource<T>(path: string, fallback: T): ApiState<T> & { re
   }, [fallback])
 
   const refresh = useCallback(async () => {
+    const requestSeq = requestSeqRef.current + 1
+    requestSeqRef.current = requestSeq
     setState((current) => ({ ...current, loading: true }))
-    const result = await apiGet<T>(path, fallbackRef.current)
-    setState({ ...result, loading: false })
+    const result = await apiGet<T>(path, fallbackRef.current, { force: true })
+    if (mountedRef.current && requestSeq === requestSeqRef.current) {
+      setState({ ...result, loading: false })
+    }
   }, [path])
 
   useEffect(() => {
+    mountedRef.current = true
     const timer = window.setTimeout(() => {
-      void refresh()
+      const requestSeq = requestSeqRef.current + 1
+      requestSeqRef.current = requestSeq
+      setState((current) => ({ ...current, loading: true }))
+      void apiGet<T>(path, fallbackRef.current).then((result) => {
+        if (mountedRef.current && requestSeq === requestSeqRef.current) {
+          setState({ ...result, loading: false })
+        }
+      })
     }, 0)
-    return () => window.clearTimeout(timer)
-  }, [refresh])
+    return () => {
+      mountedRef.current = false
+      window.clearTimeout(timer)
+    }
+  }, [path])
 
   return { ...state, refresh }
 }
