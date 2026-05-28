@@ -19,6 +19,18 @@ VITE_API_BASE_URL=http://localhost:8080
 
 If `VITE_API_BASE_URL` is empty, Vite proxies `/api` and `/health` to `VITE_API_PROXY_TARGET`.
 
+## GitHub Pages
+
+Pushes to `main` trigger `.github/workflows/deploy.yml`, which runs lint, builds the Vite app, and deploys `dist` to GitHub Pages.
+
+The deployed URL will be:
+
+```text
+https://errancel.github.io/admin-panel/
+```
+
+In repository settings, set Pages source to `GitHub Actions` if GitHub does not enable it automatically.
+
 ## Modules
 
 - Dashboard
