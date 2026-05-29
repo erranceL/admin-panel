@@ -19,6 +19,18 @@ VITE_ENABLE_ADMIN_WRITES=true
 VITE_ALLOW_MOCK_RECHARGE=true
 ```
 
+### Environment base URLs
+
+Each environment exposes one or more interchangeable entry points. Use the first one by default; the rest are backups.
+
+| Environment | Default base URL | Backup base URLs |
+| --- | --- | --- |
+| SIT | `https://surfv2-sit-api.nfexinsider.com` | - |
+| UAT | `https://surfv2-uat-api.nfexinsider.com` | `https://betav2-api.surf.one`, `https://betav2-api2.surf.one` |
+| PROD | `https://api.turboflow.xyz` | `https://api2.turboflow.xyz`, `https://api3.turboflow.xyz`, `https://api4.turboflow.xyz` |
+
+The build currently targets SIT. To point at another environment, set `VITE_API_BASE_URL` to that environment's base URL and rebuild.
+
 If `VITE_API_BASE_URL` is empty, local Vite dev proxies `/api` and `/health` to `VITE_API_PROXY_TARGET`.
 
 `VITE_API_BASE_URL` must be the API origin only, not a full endpoint path. For example, the SIT endpoint `https://surfv2-sit-api.nfexinsider.com/api/v1/soccer/rfq/trade` maps to `VITE_API_BASE_URL=https://surfv2-sit-api.nfexinsider.com`.
