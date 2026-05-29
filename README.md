@@ -16,7 +16,6 @@ Create `.env.local` from `.env.example` when needed:
 ```bash
 VITE_API_BASE_URL=https://surfv2-sit-api.nfexinsider.com
 VITE_ENABLE_ADMIN_WRITES=true
-VITE_ALLOW_MOCK_RECHARGE=true
 ```
 
 ### Environment base URLs
@@ -35,7 +34,7 @@ If `VITE_API_BASE_URL` is empty, local Vite dev proxies `/api` and `/health` to 
 
 `VITE_API_BASE_URL` must be the API origin only, not a full endpoint path. For example, the SIT endpoint `https://surfv2-sit-api.nfexinsider.com/api/v1/soccer/rfq/trade` maps to `VITE_API_BASE_URL=https://surfv2-sit-api.nfexinsider.com`.
 
-Do not put production or SIT credentials in any `VITE_*` variable because browser builds expose them. Admin writes are disabled unless `VITE_ENABLE_ADMIN_WRITES=true`; mock recharge is separately gated by `VITE_ALLOW_MOCK_RECHARGE=true`.
+Do not put production or SIT credentials in any `VITE_*` variable because browser builds expose them. Admin writes are disabled unless `VITE_ENABLE_ADMIN_WRITES=true`.
 
 ## GitHub Pages
 
@@ -53,16 +52,17 @@ The GitHub Pages deployment is configured as a private SIT demo and points to `h
 
 ## Modules
 
-- Dashboard
-- RFQ operations
-- Oracle arbitration
-- Polymarket governance
-- User/account operations
-- Distributor markup
-- Ops monitoring
-- Rebate
-- KPI reports
-- RBAC/audit
+- Dashboard (总览)
+- Markets & settlement (盘口与结算) — market pause/resume plus manual settlement fallback for exceptional results (handicap payouts, futures, single-source review)
+- External reference price (外部参考价)
+- Distributor markup (分销商加价)
+- Ops monitoring (运维监控)
+- Rebate browsing (返佣浏览) — read-only, per-user rebate detail
+- Operational stats (运营数据) — event → match → market drill-down
+- KPI reports (经营报表)
+- Permissions & audit (权限与审计) — role permission management + immutable audit log
+
+Note: rebate per-user query, server-side RBAC/audit log, and per-entity stats aggregation APIs are not yet exposed by the book service; those views fall back to demo data and are labelled accordingly.
 
 ## Commands
 

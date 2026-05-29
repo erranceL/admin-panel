@@ -7,16 +7,19 @@ import ConfirmModal from './components/ui/Modal'
 import { EmptyState, ResourceState, SkeletonBlock } from './components/ui/State'
 import ToastContainer from './components/ui/Toast'
 import { InfoRow, MetricCard, PageHeader, SectionCard, SimpleList } from './components/layout/LayoutPrimitives'
-import { ApiError, apiGet, apiPost, useApiResource } from './lib/api'
-import { formatNumber, getOperator, localStatus, roleLabels } from './lib/format'
+import { ApiError, apiPost, useApiResource } from './lib/api'
+import { formatNumber, formatPercent, getOperator, localStatus, roleLabels } from './lib/format'
 import {
   mockAuditLogs,
   mockDistributors,
+  mockEventStats,
   mockFacts,
   mockMarkets,
   mockMatches,
   mockPolymarketHealth,
   mockPolymarketQueue,
+  mockRebateRecords,
+  mockRolePermissions,
   mockStats,
   mockTeamPool,
   mockUnmappedTeams,
@@ -24,15 +27,18 @@ import {
 import { useToasts } from './hooks/useToasts'
 import type {
   AuditLogItem,
-  Balance,
   DistributorConfig,
+  EventStats,
+  MatchStats,
   OracleFact,
   PolymarketHealth,
   PolymarketQueueItem,
   PolymarketTeam,
+  RebateRecord,
   RfqMarket,
   RfqMatch,
   Role,
+  RolePermission,
   StatsOverview,
 } from './types'
 
@@ -55,17 +61,15 @@ type PendingAction = {
 
 const roles: Role[] = ['Admin', 'CS', 'Ops', 'Risk', 'SRE']
 const writesEnabled = import.meta.env.DEV || import.meta.env.VITE_ENABLE_ADMIN_WRITES === 'true'
-const mockRechargeEnabled = import.meta.env.DEV || import.meta.env.VITE_ALLOW_MOCK_RECHARGE === 'true'
 
 const navItems: NavItem[] = [
   { to: '/dashboard', label: '总览', roles: ['Admin', 'Ops', 'Risk', 'SRE'], defaultFor: ['Admin', 'Ops', 'Risk'] },
-  { to: '/rfq', label: '盘口运营', roles: ['Admin', 'Ops', 'Risk'] },
-  { to: '/oracle', label: '赛果仲裁', roles: ['Admin', 'Ops', 'Risk'] },
+  { to: '/rfq', label: '盘口与结算', roles: ['Admin', 'Ops', 'Risk'] },
   { to: '/polymarket', label: '外部参考价', roles: ['Admin', 'Ops', 'SRE'] },
-  { to: '/accounts', label: '用户账户', roles: ['Admin', 'CS', 'Risk'], defaultFor: ['CS'] },
   { to: '/distributors', label: '分销商加价', roles: ['Admin', 'Ops', 'Risk'] },
   { to: '/ops', label: '运维监控', roles: ['Admin', 'SRE', 'Ops'], defaultFor: ['SRE'] },
-  { to: '/rebate', label: '返佣', roles: ['Admin', 'Ops', 'CS'] },
+  { to: '/rebate', label: '返佣浏览', roles: ['Admin', 'Ops', 'CS'], defaultFor: ['CS'] },
+  { to: '/stats', label: '运营数据', roles: ['Admin', 'Ops', 'Risk'] },
   { to: '/kpi', label: '经营报表', roles: ['Admin', 'Ops', 'Risk'] },
   { to: '/audit', label: '权限与审计', roles: ['Admin', 'Risk', 'SRE'] },
 ]
@@ -85,12 +89,11 @@ function App() {
           <Route path="/" element={<RoleRedirect role={role} />} />
           <Route path="/dashboard" element={<DashboardPage role={role} />} />
           <Route path="/rfq" element={<RfqPage role={role} pushToast={push} />} />
-          <Route path="/oracle" element={<OraclePage role={role} pushToast={push} />} />
           <Route path="/polymarket" element={<PolymarketPage role={role} pushToast={push} />} />
-          <Route path="/accounts" element={<AccountsPage role={role} pushToast={push} />} />
           <Route path="/distributors" element={<DistributorsPage role={role} pushToast={push} />} />
           <Route path="/ops" element={<OpsPage role={role} />} />
           <Route path="/rebate" element={<RebatePage role={role} />} />
+          <Route path="/stats" element={<OperationalStatsPage role={role} />} />
           <Route path="/kpi" element={<KpiPage role={role} />} />
           <Route path="/audit" element={<AuditPage role={role} />} />
           <Route path="*" element={<RoleRedirect role={role} />} />
@@ -334,6 +337,16 @@ function RfqPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: '
   const canOperate = writesEnabled && (role === 'Admin' || role === 'Ops')
   const canSettle = writesEnabled && role === 'Admin'
 
+  const pendingFactsFallback = useMemo(() => mockFacts.filter((fact) => fact.status !== 'finalized'), [])
+  const facts = useApiResource<OracleFact[]>('/api/v1/admin/oracle/facts?status=proposed&limit=50', pendingFactsFallback)
+  const [factId, setFactId] = useState(mockFacts[0].fact_id)
+  const [settleMarketId, setSettleMarketId] = useState(mockFacts[0].market_id)
+  const [settleWinner, setSettleWinner] = useState('')
+  const [settleReason, setSettleReason] = useState('')
+  const [payoutRatios, setPayoutRatios] = useState('{}')
+  const canResolve = writesEnabled && (role === 'Admin' || role === 'Ops')
+  const canFinalize = writesEnabled && role === 'Admin'
+
   useEffect(() => {
     const firstMarket = markets.data[0]?.market_id ?? ''
     if (firstMarket && !markets.data.some((market) => market.market_id === marketId)) {
@@ -380,10 +393,77 @@ function RfqPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: '
     })
   }
 
+  function selectFact(fact: OracleFact) {
+    setFactId(fact.fact_id)
+    setSettleMarketId(fact.market_id)
+    setSettleWinner(fact.winner)
+  }
+
+  function parseRatios() {
+    try {
+      const parsed = JSON.parse(payoutRatios)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // handled below
+    }
+    throw new Error('派彩比例格式不正确，请按选项填写比例，或保留默认规则')
+  }
+
+  function submitOracle(action: 'resolve' | 'finalize' | 'cancel' | 'phase') {
+    if (!settleMarketId.trim() || !settleReason.trim()) {
+      pushToast({ type: 'warning', title: '请填写盘口编号和操作原因' })
+      return
+    }
+    if (!writesEnabled) {
+      pushToast({ type: 'warning', title: '当前环境不允许提交修改', message: '请联系管理员或运维开通测试环境修改权限。' })
+      return
+    }
+    if ((action === 'finalize' || action === 'cancel') && !canFinalize) {
+      pushToast({ type: 'warning', title: '最终确认与作废仅管理员可执行' })
+      return
+    }
+    if (!canResolve) {
+      pushToast({ type: 'warning', title: '当前角色仅可查看或复核，不能提交结算操作' })
+      return
+    }
+    const endpoint = {
+      resolve: '/api/v1/admin/oracle/resolve',
+      finalize: '/api/v1/admin/oracle/finalize',
+      cancel: '/api/v1/admin/oracle/cancel',
+      phase: '/api/v1/admin/oracle/phase',
+    }[action]
+    requestConfirm({
+      key: `oracle-${action}`,
+      title: `确认${localOracleAction(action)}`,
+      description: '此操作将影响赛果结算与用户资金，请仔细核对。',
+      danger: action === 'finalize' || action === 'cancel',
+      details: [
+        ['赛果记录编号', factId || '待生成'],
+        ['盘口编号', settleMarketId],
+        ['胜出选项', localOutcomeValue(settleWinner) || '作废/待定'],
+        ['原因', settleReason],
+      ],
+      run: async () => {
+        const body =
+          action === 'resolve'
+            ? { market_id: settleMarketId }
+            : action === 'finalize'
+              ? { fact_id: factId, winner: settleWinner, payout_ratios: parseRatios(), by: getOperator(role), reason: settleReason }
+              : action === 'cancel'
+                ? { fact_id: factId, by: getOperator(role), reason: settleReason }
+                : { subject_id: selectedSubjectId(settleMarketId), phase: 'fulltime', market_ids: [settleMarketId], by: getOperator(role), reason: settleReason }
+        await apiPost<typeof body, unknown>(endpoint, body)
+        await facts.refresh()
+      },
+    })
+  }
+
   return (
     <Guard role={role} allow={['Admin', 'Ops', 'Risk']}>
-      <PageHeader title="盘口运营" desc="管理赛事与盘口暂停、恢复及人工结算。风控仅可查看或提交复核意见。" />
-      <DemoNotice scope="盘口运营页面" />
+      <PageHeader title="盘口与结算" desc="管理赛事与盘口的暂停、恢复，以及赛果异常时的人工结算兜底。常规比赛由系统自动结算，人工仅处理异常。" />
+      <DemoNotice scope="盘口与结算页面" />
       <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
         <SectionCard title="赛事监控" action={<ResourceState {...matches} onRefresh={() => void matches.refresh()} />}>
           {matches.loading ? (
@@ -465,138 +545,29 @@ function RfqPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: '
           </SectionCard>
         </div>
       </div>
-      {modal}
-    </Guard>
-  )
-}
 
-function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type: 'success' | 'error' | 'warning' | 'info'; title: string; message?: string }) => void }) {
-  const [status, setStatus] = useState('proposed')
-  const factsFallback = useMemo(() => mockFacts.filter((fact) => status === '' || fact.status === status), [status])
-  const facts = useApiResource<OracleFact[]>(`/api/v1/admin/oracle/facts?status=${status}&limit=50`, factsFallback)
-  const [factId, setFactId] = useState(mockFacts[0].fact_id)
-  const [marketId, setMarketId] = useState(mockFacts[0].market_id)
-  const [winner, setWinner] = useState('')
-  const [reason, setReason] = useState('')
-  const [evidenceUrl, setEvidenceUrl] = useState('')
-  const [payoutRatios, setPayoutRatios] = useState('{}')
-  const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
-  const canWrite = writesEnabled && (role === 'Admin' || role === 'Ops')
-  const canFinalize = writesEnabled && role === 'Admin'
-
-  function selectFact(fact: OracleFact) {
-    setFactId(fact.fact_id)
-    setMarketId(fact.market_id)
-    setWinner(fact.winner)
-  }
-
-  function parseRatios() {
-    try {
-      const parsed = JSON.parse(payoutRatios)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>
-      }
-    } catch {
-      // handled below
-    }
-    throw new Error('派彩比例格式不正确，请按选项填写比例，或保留默认规则')
-  }
-
-  function submitOracle(action: 'resolve' | 'candidate' | 'dispute' | 'finalize' | 'cancel' | 'phase') {
-    if (!marketId.trim() || !reason.trim()) {
-      pushToast({ type: 'warning', title: '请填写盘口编号和操作原因' })
-      return
-    }
-    if (!writesEnabled) {
-      pushToast({ type: 'warning', title: '当前环境不允许提交修改', message: '请联系管理员或运维开通测试环境修改权限。' })
-      return
-    }
-    if ((action === 'finalize' || action === 'cancel') && !canFinalize) {
-      pushToast({ type: 'warning', title: '当前角色不能直接执行最终确认或作废' })
-      return
-    }
-    if (!canWrite) {
-      pushToast({ type: 'warning', title: '当前角色仅可查看或复核，不能提交修改' })
-      return
-    }
-
-    const endpoint = {
-      resolve: '/api/v1/admin/oracle/resolve',
-      candidate: '/api/v1/admin/oracle/candidate',
-      dispute: '/api/v1/admin/oracle/dispute',
-      finalize: '/api/v1/admin/oracle/finalize',
-      cancel: '/api/v1/admin/oracle/cancel',
-      phase: '/api/v1/admin/oracle/phase',
-    }[action]
-
-    requestConfirm({
-      key: `oracle-${action}`,
-      title: `确认${localOracleAction(action)}`,
-      description: '此操作将影响赛果结算与用户资金，请仔细核对。',
-      danger: action === 'finalize' || action === 'cancel',
-      details: [
-        ['赛果记录编号', factId || '待生成'],
-        ['盘口编号', marketId],
-        ['胜出选项', localOutcomeValue(winner) || '作废/待定'],
-        ['原因', reason],
-      ],
-      run: async () => {
-        const body =
-          action === 'resolve'
-            ? { market_id: marketId }
-            : action === 'candidate'
-              ? { source: 'manual_ops', market_id: marketId, winner, confidence: 0.98, evidence_url: evidenceUrl }
-              : action === 'dispute'
-                ? { fact_id: factId, reason, by: getOperator(role) }
-                : action === 'finalize'
-                  ? { fact_id: factId, winner, payout_ratios: parseRatios(), by: getOperator(role), reason }
-                  : action === 'cancel'
-                    ? { fact_id: factId, by: getOperator(role), reason }
-                    : { subject_id: selectedSubjectId(marketId), phase: 'fulltime', market_ids: [marketId], by: getOperator(role), reason }
-        await apiPost<typeof body, unknown>(endpoint, body)
-        await facts.refresh()
-      },
-    })
-  }
-
-  return (
-    <Guard role={role} allow={['Admin', 'Ops', 'Risk']}>
-      <PageHeader title="赛果仲裁" desc="处理待确认赛果、争议、复核结果提交与管理员最终裁定。" />
-      <DemoNotice scope="赛果仲裁页面" />
-      <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_420px]">
         <SectionCard
-          title="待处理赛果"
-          action={
-            <div className="flex items-center gap-3">
-              <Select label="状态筛选" value={status} onChange={(event) => setStatus(event.target.value)} className="h-9">
-                <option value="">全部</option>
-                <option value="proposed">待确认</option>
-                <option value="disputed">争议中</option>
-                <option value="finalized">已最终确认</option>
-              </Select>
-              <ResourceState {...facts} onRefresh={() => void facts.refresh()} />
-            </div>
-          }
+          title="待人工处理赛果"
+          action={<ResourceState {...facts} onRefresh={() => void facts.refresh()} />}
         >
+          <p className="mb-3 text-xs text-[var(--text-secondary)]">常规比赛由系统自动结算；下方仅列出需要人工兜底的赛果（让球派彩、系列赛定案、单一数据源待复核等）。</p>
           {facts.loading ? <SkeletonBlock rows={4} /> : <FactList facts={facts.data} onSelect={selectFact} />}
         </SectionCard>
-        <SectionCard title="赛果处理">
+        <SectionCard title="赛果结算处理">
           <div className="space-y-3">
-            <Input label="盘口编号" value={marketId} onChange={(event) => setMarketId(event.target.value)} />
+            <Input label="盘口编号" value={settleMarketId} onChange={(event) => setSettleMarketId(event.target.value)} />
             <Input label="赛果记录编号" value={factId} onChange={(event) => setFactId(event.target.value)} />
-            <Input label="胜出选项" value={winner} onChange={(event) => setWinner(event.target.value)} placeholder="留空表示作废/待定" />
-            <Input label="证据链接" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://..." />
-            <Textarea label="派彩比例（高级）" value={payoutRatios} onChange={(event) => setPayoutRatios(event.target.value)} />
-            <Textarea label="操作原因" value={reason} onChange={(event) => setReason(event.target.value)} />
+            <Input label="胜出选项" value={settleWinner} onChange={(event) => setSettleWinner(event.target.value)} placeholder="留空表示作废/待定" />
+            <Textarea label="派彩比例（让球/半赢，按选项填写比例，默认留空走系统规则）" value={payoutRatios} onChange={(event) => setPayoutRatios(event.target.value)} />
+            <Textarea label="操作原因" value={settleReason} onChange={(event) => setSettleReason(event.target.value)} />
             <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-resolve'} onClick={() => submitOracle('resolve')}>发起赛果确认</Button>
-              <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-candidate'} onClick={() => submitOracle('candidate')}>提交复核结果</Button>
-              <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-dispute'} onClick={() => submitOracle('dispute')}>发起争议</Button>
+              <Button variant="secondary" disabled={!canResolve} loading={runningKey === 'oracle-resolve'} onClick={() => submitOracle('resolve')}>触发赛果判定</Button>
+              <Button variant="secondary" disabled={!canResolve} loading={runningKey === 'oracle-phase'} onClick={() => submitOracle('phase')}>切换比赛阶段</Button>
               <Button disabled={!canFinalize} loading={runningKey === 'oracle-finalize'} onClick={() => submitOracle('finalize')}>管理员最终确认</Button>
               <Button variant="danger" disabled={!canFinalize} loading={runningKey === 'oracle-cancel'} onClick={() => submitOracle('cancel')}>作废本条赛果</Button>
-              <Button variant="secondary" disabled={!canWrite} loading={runningKey === 'oracle-phase'} onClick={() => submitOracle('phase')}>切换比赛阶段</Button>
             </div>
-            {!canFinalize && <p className="text-xs text-[var(--text-secondary)]">最终确认和作废仅管理员可执行；运营可提交复核结果或争议，风控只读复核。</p>}
+            {!canFinalize && <p className="text-xs text-[var(--text-secondary)]">最终确认和作废仅管理员可执行；运营可触发判定或切换阶段，风控只读复核。</p>}
           </div>
         </SectionCard>
       </div>
@@ -607,9 +578,7 @@ function OraclePage({ role, pushToast }: { role: Role; pushToast: (toast: { type
 
 function localOracleAction(action: string) {
   return {
-    resolve: '发起赛果确认',
-    candidate: '提交复核结果',
-    dispute: '发起争议',
+    resolve: '触发赛果判定',
     finalize: '最终确认',
     cancel: '作废赛果记录',
     phase: '切换比赛阶段',
@@ -886,109 +855,6 @@ function TeamSelectList({ teams, selected, onSelect }: { teams: PolymarketTeam[]
   )
 }
 
-function AccountsPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: 'success' | 'error' | 'warning' | 'info'; title: string; message?: string }) => void }) {
-  const [accountId, setAccountId] = useState('10001')
-  const [coin, setCoin] = useState('USDT')
-  const [amount, setAmount] = useState('10000')
-  const [activeTab, setActiveTab] = useState<'balance' | 'positions' | 'trades' | 'settlements'>('balance')
-  const [balance, setBalance] = useState<Balance>({ account_id: 10001, coin: 'USDT', available: '8200', frozen: '1800', total: '10000' })
-  const [balanceMode, setBalanceMode] = useState<'real' | 'mock'>('mock')
-  const [balanceError, setBalanceError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
-  const { requestConfirm, modal, runningKey } = useConfirmAction(pushToast)
-  const canRecharge = role === 'Admin' && mockRechargeEnabled
-
-  async function queryBalance() {
-    if (!Number.isFinite(Number(accountId))) {
-      pushToast({ type: 'warning', title: '用户账户编号必须是数字' })
-      return
-    }
-    setLoading(true)
-    const response = await apiGet<Balance>(`/api/v1/admin/balance?account_id=${accountId}&coin=${coin}`, balance)
-    setBalance(response.data)
-    setBalanceMode(response.mode)
-    setBalanceError(response.error)
-    setLoading(false)
-  }
-
-  function recharge() {
-    if (!canRecharge) {
-      pushToast({ type: 'warning', title: '测试充值仅管理员在测试环境可用' })
-      return
-    }
-    requestConfirm({
-      key: 'account-recharge',
-      title: '确认测试充值',
-      description: '仅用于测试环境，生产环境不会提供此功能。',
-      danger: true,
-      details: [
-        ['账户', accountId],
-        ['币种', coin],
-        ['金额', amount],
-      ],
-      run: async () => {
-        const response = await apiPost<{ account_id: number; coin: string; amount: string }, Balance>('/api/v1/admin/mock_recharge', {
-          account_id: Number(accountId),
-          coin,
-          amount,
-        })
-        setBalance(response.data)
-        setBalanceMode('real')
-        setBalanceError(null)
-      },
-    })
-  }
-
-  return (
-    <Guard role={role} allow={['Admin', 'CS', 'Risk']}>
-      <PageHeader title="用户账户" desc="查询用户资金、持仓、交易与结算记录。测试充值仅供管理员在测试环境使用。" />
-      <DemoNotice scope="账户页面" />
-      <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-        <SectionCard title="账户查询" action={<span className="text-xs text-[var(--text-secondary)]">{balanceMode === 'real' ? '正式数据' : '示例数据'}</span>}>
-          <div className="space-y-3">
-            <Input label="用户账户编号" value={accountId} onChange={(event) => setAccountId(event.target.value)} />
-            <Input label="币种" value={coin} onChange={(event) => setCoin(event.target.value)} />
-            {canRecharge && <Input label="测试充值金额" value={amount} onChange={(event) => setAmount(event.target.value)} />}
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="secondary" loading={loading} onClick={() => void queryBalance()}>查询余额</Button>
-              {canRecharge ? <Button loading={runningKey === 'account-recharge'} onClick={recharge}>测试充值</Button> : <Button variant="ghost" disabled>无充值权限</Button>}
-            </div>
-            {balanceError && <p className="text-xs text-[#F59E0B]" role="status">查询失败，当前展示示例/旧数据：{balanceError}</p>}
-          </div>
-        </SectionCard>
-        <SectionCard title="账户详情">
-          <div className="mb-4 flex flex-wrap gap-2">
-            {(['balance', 'positions', 'trades', 'settlements'] as const).map((tab) => (
-              <Button key={tab} variant={activeTab === tab ? 'primary' : 'secondary'} onClick={() => setActiveTab(tab)}>
-                {tabLabel(tab)}
-              </Button>
-            ))}
-          </div>
-          {activeTab === 'balance' ? (
-            <div className="grid gap-3 md:grid-cols-3">
-              <MetricCard label="可用" value={balance.available ?? balance.balance ?? '-'} source={balanceMode} />
-              <MetricCard label="冻结" value={balance.frozen ?? '-'} source={balanceMode} />
-              <MetricCard label="总额" value={balance.total ?? '-'} source={balanceMode} />
-            </div>
-          ) : (
-            <EmptyState title={`${tabLabel(activeTab)}功能开发中`} desc="该功能尚未上线，暂无法查询。如需查历史持仓或交易，请联系技术支持。" />
-          )}
-        </SectionCard>
-      </div>
-      {modal}
-    </Guard>
-  )
-}
-
-function tabLabel(tab: 'balance' | 'positions' | 'trades' | 'settlements') {
-  return {
-    balance: '资金快照',
-    positions: '持仓',
-    trades: '交易',
-    settlements: '结算',
-  }[tab]
-}
-
 function DistributorsPage({ role, pushToast }: { role: Role; pushToast: (toast: { type: 'success' | 'error' | 'warning' | 'info'; title: string; message?: string }) => void }) {
   const [configs, setConfigs] = useState<DistributorConfig[]>(mockDistributors)
   const [logs, setLogs] = useState<AuditLogItem[]>(mockAuditLogs)
@@ -1117,18 +983,86 @@ function OpsPage({ role }: { role: Role }) {
 }
 
 function RebatePage({ role }: { role: Role }) {
+  const records = useApiResource<RebateRecord[]>('/api/v1/admin/rebate/records?limit=200', mockRebateRecords)
+  const [accountFilter, setAccountFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+
+  const filtered = useMemo(
+    () =>
+      records.data.filter(
+        (record) =>
+          (accountFilter.trim() === '' || String(record.account_id).includes(accountFilter.trim())) &&
+          (statusFilter === '' || record.status === statusFilter),
+      ),
+    [records.data, accountFilter, statusFilter],
+  )
+
+  const totalRebate = useMemo(
+    () => filtered.reduce((sum, record) => (record.status === 'reversed' ? sum : sum + Number(record.rebate_amount || 0)), 0),
+    [filtered],
+  )
+  const uniqueUsers = useMemo(() => new Set(filtered.map((record) => record.account_id)).size, [filtered])
+
   return (
     <Guard role={role} allow={['Admin', 'Ops', 'CS']}>
-      <PageHeader title="返佣管理" desc="当前为待接入功能面板，避免把静态数字误认为真实返佣流水。" />
-      <DemoNotice scope="返佣页面" />
+      <PageHeader title="返佣浏览" desc="按用户粒度查看返佣明细。本模块仅供浏览查询，不做规则配置或资金操作。" />
+      <DemoNotice scope="返佣浏览页面" />
       <div className="grid gap-4 md:grid-cols-3">
-        <MetricCard label="今日返佣" value="演示" source="mock" desc="待返佣记录查询功能" />
-        <MetricCard label="待审核" value="演示" source="mock" desc="待异常队列功能" />
-        <MetricCard label="异常单" value="演示" source="mock" desc="待链上资金对账功能" />
+        <MetricCard label="返佣总额（不含已追回）" value={`${formatNumber(totalRebate)} USDT`} source={records.mode} desc="当前筛选结果合计" />
+        <MetricCard label="涉及用户数" value={uniqueUsers} source={records.mode} desc="当前筛选结果去重用户" />
+        <MetricCard label="记录条数" value={filtered.length} source={records.mode} desc="当前筛选结果" />
       </div>
       <div className="mt-4">
-        <SectionCard title="待接入能力">
-          <SimpleList items={['返佣规则启停和比例配置', '按交易/账户查询返佣记录', '作废/退款后的返佣追回记录', '返佣流水与链上交易对齐']} />
+        <SectionCard
+          title="返佣明细"
+          action={
+            <div className="flex flex-wrap items-center gap-3">
+              <Input label="按用户账户筛选" value={accountFilter} onChange={(event) => setAccountFilter(event.target.value)} placeholder="输入账户编号" />
+              <Select label="状态" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-9">
+                <option value="">全部</option>
+                <option value="settled">已发放</option>
+                <option value="pending">待发放</option>
+                <option value="reversed">已追回</option>
+              </Select>
+              <ResourceState {...records} onRefresh={() => void records.refresh()} />
+            </div>
+          }
+        >
+          {records.loading ? (
+            <SkeletonBlock rows={5} />
+          ) : filtered.length === 0 ? (
+            <EmptyState title="暂无返佣记录" desc="当前筛选条件没有匹配的返佣明细。" />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[860px] text-left text-sm">
+                <thead className="text-xs uppercase text-[var(--text-secondary)]">
+                  <tr>
+                    <th scope="col" className="pb-3">用户</th>
+                    <th scope="col" className="pb-3">盘口</th>
+                    <th scope="col" className="pb-3">成交额</th>
+                    <th scope="col" className="pb-3">返佣额</th>
+                    <th scope="col" className="pb-3">比例</th>
+                    <th scope="col" className="pb-3">状态</th>
+                    <th scope="col" className="pb-3">时间</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {filtered.map((record) => (
+                    <tr key={record.id}>
+                      <td className="py-3 font-medium">{record.username ?? record.account_id}<span className="ml-1 text-xs text-[var(--text-secondary)]">#{record.account_id}</span></td>
+                      <td className="py-3 text-[var(--text-secondary)]">{record.market_title}</td>
+                      <td className="py-3">{formatNumber(record.trade_volume)} {record.coin}</td>
+                      <td className="py-3 font-semibold">{formatNumber(record.rebate_amount)} {record.coin}</td>
+                      <td className="py-3">{(record.rate_bps / 100).toFixed(2)}%</td>
+                      <td className="py-3"><Badge tone={record.status === 'settled' ? 'success' : record.status === 'reversed' ? 'danger' : 'warning'}>{localStatus(record.status)}</Badge></td>
+                      <td className="py-3 text-[var(--text-secondary)]">{record.created_at}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-[var(--text-secondary)]">说明：返佣发放由系统在成交时触发，本表为只读浏览。用户粒度返佣查询接口尚未在本服务开放，当前可能为示例数据。</p>
         </SectionCard>
       </div>
     </Guard>
@@ -1157,25 +1091,222 @@ function KpiPage({ role }: { role: Role }) {
 
 function AuditPage({ role }: { role: Role }) {
   const logs = useMemo<AuditLogItem[]>(() => mockAuditLogs, [])
+  const [permissions, setPermissions] = useState<RolePermission[]>(mockRolePermissions)
+  const canManagePermission = role === 'Admin'
+
+  function toggleModule(targetRole: Role, moduleKey: string) {
+    if (!canManagePermission) {
+      return
+    }
+    setPermissions((current) =>
+      current.map((item) =>
+        item.role === targetRole
+          ? {
+              ...item,
+              modules: item.modules.includes(moduleKey)
+                ? item.modules.filter((key) => key !== moduleKey)
+                : [...item.modules, moduleKey],
+            }
+          : item,
+      ),
+    )
+  }
+
   return (
     <Guard role={role} allow={['Admin', 'Risk', 'SRE']}>
-      <PageHeader title="权限与审计" desc="当前展示演示角色权限说明；正式上线必须依赖系统权限和操作日志。" />
-      <DemoNotice scope="审计页面" />
-      <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
-        <SectionCard title="角色权限说明（演示）">
-          <div className="space-y-3">
-            {roles.map((item) => (
-              <div key={item} className="rounded-xl border border-[var(--border)] bg-[var(--bg-control)] p-3">
-                <p className="font-semibold">{roleLabels[item]}</p>
-                <p className="mt-1 text-xs text-[var(--text-secondary)]">{navItems.filter((nav) => nav.roles.includes(item)).map((nav) => nav.label).join(' / ')}</p>
-              </div>
-            ))}
-          </div>
-        </SectionCard>
-        <SectionCard title="操作日志（开发中）" action={<Badge tone="warning">开发中</Badge>}>
+      <PageHeader title="权限与审计" desc="管理角色对各模块的访问权限，并查看不可篡改的操作日志。日志为只读，任何人都不能删除或修改。" />
+      <DemoNotice scope="权限与审计页面" />
+      <SectionCard
+        title="角色权限管理"
+        action={<Badge tone={canManagePermission ? 'accent' : 'neutral'}>{canManagePermission ? '可编辑（演示）' : '只读'}</Badge>}
+      >
+        <p className="mb-3 text-xs text-[var(--text-secondary)]">勾选表示该角色可访问对应模块。仅管理员可调整；当前为演示，修改仅保存在本页面。正式上线由服务端权限系统强制执行。</p>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead className="text-xs uppercase text-[var(--text-secondary)]">
+              <tr>
+                <th scope="col" className="pb-3 pr-4">角色</th>
+                {navItems.map((nav) => (
+                  <th key={nav.to} scope="col" className="pb-3 px-2 text-center font-medium">{nav.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {permissions.map((permission) => (
+                <tr key={permission.role}>
+                  <td className="py-3 pr-4 font-medium">{roleLabels[permission.role]}</td>
+                  {navItems.map((nav) => {
+                    const checked = permission.modules.includes(nav.to)
+                    return (
+                      <td key={nav.to} className="py-3 px-2 text-center">
+                        <input
+                          type="checkbox"
+                          aria-label={`${roleLabels[permission.role]} 访问 ${nav.label}`}
+                          checked={checked}
+                          disabled={!canManagePermission}
+                          onChange={() => toggleModule(permission.role, nav.to)}
+                          className="h-4 w-4 accent-[#2DD4BF] disabled:opacity-40"
+                        />
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!canManagePermission && <p className="mt-3 text-xs text-[var(--text-secondary)]">当前角色为只读，仅管理员可调整权限分配。</p>}
+      </SectionCard>
+      <div className="mt-4">
+        <SectionCard title="操作日志" action={<Badge tone="neutral">只读 · 不可删改</Badge>}>
+          <p className="mb-3 text-xs text-[var(--text-secondary)]">日志仅供审计查看，系统不提供删除或编辑入口。正式上线应记录操作人、IP、修改前后值、复核人与时间。</p>
           <AuditList logs={logs} />
         </SectionCard>
       </div>
+    </Guard>
+  )
+}
+
+function OperationalStatsPage({ role }: { role: Role }) {
+  const events = useApiResource<EventStats[]>('/api/v1/admin/stats/events', mockEventStats)
+  const [eventId, setEventId] = useState(mockEventStats[0].event_id)
+  const [matchId, setMatchId] = useState<number | null>(null)
+
+  const selectedEvent = events.data.find((event) => event.event_id === eventId) ?? events.data[0]
+  const selectedMatch: MatchStats | null =
+    selectedEvent?.match_stats.find((match) => match.match_id === matchId) ?? null
+
+  return (
+    <Guard role={role} allow={['Admin', 'Ops', 'Risk']}>
+      <PageHeader title="运营数据" desc="按赛事 → 比赛 → 盘口逐级下钻查看成交额、成交量、成交率与拒单率等运营指标。" />
+      <DemoNotice scope="运营数据页面" />
+
+      <SectionCard title="赛事列表" action={<ResourceState {...events} onRefresh={() => void events.refresh()} />}>
+        {events.loading ? (
+          <SkeletonBlock rows={3} />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] text-left text-sm">
+              <thead className="text-xs uppercase text-[var(--text-secondary)]">
+                <tr>
+                  <th scope="col" className="pb-3">赛事</th>
+                  <th scope="col" className="pb-3">联赛</th>
+                  <th scope="col" className="pb-3">比赛数</th>
+                  <th scope="col" className="pb-3">盘口数</th>
+                  <th scope="col" className="pb-3">成交额</th>
+                  <th scope="col" className="pb-3">成交笔数</th>
+                  <th scope="col" className="pb-3">成交率</th>
+                  <th scope="col" className="pb-3">拒单率</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {events.data.map((event) => (
+                  <tr
+                    key={event.event_id}
+                    className={`cursor-pointer hover:bg-[var(--bg-control)] ${eventId === event.event_id ? 'bg-[#2DD4BF]/5' : ''}`}
+                    onClick={() => {
+                      setEventId(event.event_id)
+                      setMatchId(null)
+                    }}
+                  >
+                    <td className="py-3 font-medium">{event.event_name}</td>
+                    <td className="py-3 text-[var(--text-secondary)]">{event.league}</td>
+                    <td className="py-3">{event.matches}</td>
+                    <td className="py-3">{event.markets}</td>
+                    <td className="py-3">{formatNumber(event.gmv_usd)} USDT</td>
+                    <td className="py-3">{formatNumber(event.trades)}</td>
+                    <td className="py-3">{formatPercent(event.fill_rate)}</td>
+                    <td className="py-3">{formatPercent(event.reject_rate)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
+
+      {selectedEvent && (
+        <div className="mt-4">
+          <SectionCard title={`比赛列表 · ${selectedEvent.event_name}`}>
+            <div className="mb-4 grid gap-3 md:grid-cols-4">
+              <MetricCard label="赛事成交额" value={`${formatNumber(selectedEvent.gmv_usd)} USDT`} source={events.mode} />
+              <MetricCard label="比赛数" value={selectedEvent.matches} source={events.mode} />
+              <MetricCard label="成交率" value={formatPercent(selectedEvent.fill_rate)} source={events.mode} />
+              <MetricCard label="拒单率" value={formatPercent(selectedEvent.reject_rate)} source={events.mode} />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-left text-sm">
+                <thead className="text-xs uppercase text-[var(--text-secondary)]">
+                  <tr>
+                    <th scope="col" className="pb-3">比赛</th>
+                    <th scope="col" className="pb-3">状态</th>
+                    <th scope="col" className="pb-3">盘口数</th>
+                    <th scope="col" className="pb-3">成交额</th>
+                    <th scope="col" className="pb-3">成交笔数</th>
+                    <th scope="col" className="pb-3">成交率</th>
+                    <th scope="col" className="pb-3">拒单率</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {selectedEvent.match_stats.map((match) => (
+                    <tr
+                      key={match.match_id}
+                      className={`cursor-pointer hover:bg-[var(--bg-control)] ${matchId === match.match_id ? 'bg-[#2DD4BF]/5' : ''}`}
+                      onClick={() => setMatchId(match.match_id)}
+                    >
+                      <td className="py-3 font-medium">{match.home} vs {match.away}</td>
+                      <td className="py-3"><Badge tone={match.status === 'Live' ? 'accent' : 'neutral'}>{localStatus(match.status)}</Badge></td>
+                      <td className="py-3">{match.markets}</td>
+                      <td className="py-3">{formatNumber(match.gmv_usd)} USDT</td>
+                      <td className="py-3">{formatNumber(match.trades)}</td>
+                      <td className="py-3">{formatPercent(match.fill_rate)}</td>
+                      <td className="py-3">{formatPercent(match.reject_rate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SectionCard>
+        </div>
+      )}
+
+      {selectedMatch && (
+        <div className="mt-4">
+          <SectionCard title={`盘口明细 · ${selectedMatch.home} vs ${selectedMatch.away}`}>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[820px] text-left text-sm">
+                <thead className="text-xs uppercase text-[var(--text-secondary)]">
+                  <tr>
+                    <th scope="col" className="pb-3">盘口</th>
+                    <th scope="col" className="pb-3">状态</th>
+                    <th scope="col" className="pb-3">成交额</th>
+                    <th scope="col" className="pb-3">24h 成交量</th>
+                    <th scope="col" className="pb-3">报价数</th>
+                    <th scope="col" className="pb-3">成交笔数</th>
+                    <th scope="col" className="pb-3">成交率</th>
+                    <th scope="col" className="pb-3">拒单率</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {selectedMatch.market_stats.map((market) => (
+                    <tr key={market.market_id}>
+                      <td className="py-3 font-medium">{market.market_title}</td>
+                      <td className="py-3"><Badge tone={market.status === 'open' ? 'success' : 'warning'}>{localStatus(market.status)}</Badge></td>
+                      <td className="py-3">{formatNumber(market.gmv_usd)} USDT</td>
+                      <td className="py-3">{formatNumber(market.volume_24h_usd)} USDT</td>
+                      <td className="py-3">{formatNumber(market.quotes)}</td>
+                      <td className="py-3">{formatNumber(market.trades)}</td>
+                      <td className="py-3">{formatPercent(market.fill_rate)}</td>
+                      <td className="py-3">{formatPercent(market.reject_rate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-[var(--text-secondary)]">说明：按赛事/比赛/盘口聚合的运营统计接口尚未在本服务开放，当前可能为示例数据。</p>
+          </SectionCard>
+        </div>
+      )}
     </Guard>
   )
 }

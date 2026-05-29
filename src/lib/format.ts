@@ -45,8 +45,18 @@ export function localStatus(value: string | undefined) {
     success: '成功',
     'pending second review': '待二次复核',
     'local demo only': '仅本地演示',
+    settled: '已发放',
+    pending: '待发放',
+    reversed: '已追回',
   }
   return value ? map[value] ?? value : '-'
+}
+
+export function formatPercent(value: number | undefined) {
+  if (value === undefined || Number.isNaN(value)) {
+    return '-'
+  }
+  return `${(value * 100).toFixed(1)}%`
 }
 
 export function getOperator(role: Role) {

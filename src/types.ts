@@ -130,6 +130,63 @@ export interface AuditLogItem {
   reason?: string
 }
 
+export interface RebateRecord {
+  id: string
+  account_id: number
+  username?: string
+  coin: string
+  trade_id: string
+  market_title: string
+  trade_volume: string
+  rebate_amount: string
+  rate_bps: number
+  status: 'settled' | 'pending' | 'reversed'
+  created_at: string
+}
+
+export interface MarketStats {
+  market_id: string
+  market_title: string
+  status: string
+  gmv_usd: string
+  volume_24h_usd: string
+  quotes: number
+  trades: number
+  fill_rate: number
+  reject_rate: number
+}
+
+export interface MatchStats {
+  match_id: number
+  home: string
+  away: string
+  status: string
+  gmv_usd: string
+  markets: number
+  trades: number
+  fill_rate: number
+  reject_rate: number
+  market_stats: MarketStats[]
+}
+
+export interface EventStats {
+  event_id: string
+  event_name: string
+  league: string
+  matches: number
+  markets: number
+  gmv_usd: string
+  trades: number
+  fill_rate: number
+  reject_rate: number
+  match_stats: MatchStats[]
+}
+
+export interface RolePermission {
+  role: Role
+  modules: string[]
+}
+
 export interface ToastItem {
   id: string
   type: 'success' | 'error' | 'warning' | 'info'
